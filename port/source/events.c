@@ -352,7 +352,7 @@ bool ev_language_available(int lang)
 {
 	if (lang == 1)
 		return true;
-	if (lang < 2 || lang > 5)
+	if (lang != 2)
 		return false;
 	if (!s_lang_ok[lang]) {
 		char path[96];
@@ -484,6 +484,26 @@ static const char* msg_get(const MsgFile* m, u32 i)
 	if (i >= m->count || m->offs[i] >= m->size)
 		return NULL;
 	return m->data + m->offs[i];
+}
+
+// Film playback can also start from the title's Movie Menu, without a loaded stage.
+static MsgFile s_movie_text;
+
+void ev_movie_subtitles_close(void)
+{
+	msg_free(&s_movie_text);
+}
+
+bool ev_movie_subtitles_open(int stage)
+{
+	char name[16];
+	snprintf(name, sizeof name, "s%02d.msg", stage);
+	return load_named(&s_movie_text, name);
+}
+
+const char* ev_movie_subtitle(unsigned message)
+{
+	return msg_get(&s_movie_text, message);
 }
 
 bool ev_load_stage(int stage)

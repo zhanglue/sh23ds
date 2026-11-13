@@ -12,7 +12,7 @@
 enum { PM_NONE, PM_RESUME, PM_SAVE, PM_LOAD, PM_OPTIONS, PM_QUIT, PM_MAP, PM_MEMOS };
 
 void pausemenu_open(bool can_save);
-void pausemenu_open_at(bool can_save, int row);  // back from the Map or Memos row: that row chosen
+void pausemenu_open_at(bool can_save, int action);  // select the row for a PM_* action
 void pausemenu_where(const char* place, float play_time);   // for the top screen, before opening
 void pausemenu_close(void);
 int pausemenu_update(u32 down);          // a PM_* once one is chosen

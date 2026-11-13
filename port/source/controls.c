@@ -1,3 +1,4 @@
+#include "ui_review.h"
 // Button layouts and remapping (see controls.h and port/CONTROLS.md).
 #include "controls.h"
 #include <string.h>
@@ -23,8 +24,8 @@ static struct {
 	int sel;
 	bool capture;               // waiting for the button to bind
 	bool dirty;
-	char label[40];
-	char rows[N_MENU_ACTS + 2][40];
+	char label[96];
+	char rows[N_MENU_ACTS + 2][96];
 	int slot;                   // the touchui menu the page uses (TOUI_PAUSE unless told otherwise)
 	bool slot_set;
 } C;
@@ -74,7 +75,11 @@ const char* controls_name(ControlsAction act)
 	                                               "Look", "Quick turn", "Strafe left", "Strafe right", "Map",
 	                                               "Target left", "Target right", "Quick heal", "Pause",
 	                                               "Cancel" };
-	return act < ACT_COUNT ? names[act] : "";
+	if (act >= ACT_COUNT)
+		return "";
+	char id[8];
+	snprintf(id, sizeof id, "K%02u", (unsigned)act + 1);
+	return zh_ui(id, names[act]);
 }
 
 static int L(void) { return controls_layout() == CONTROLS_LAYOUT_NEW ? 1 : 0; }
@@ -206,7 +211,7 @@ int controls_help(char lines[][40], int max)
 const char* controls_menu_label(void)
 {
 	snprintf(C.label, sizeof C.label, "Buttons     %s 3DS layout", L() ? "New" : "Old");
-	return C.label;
+	return zh_ui(L() ? "K20" : "K19", C.label);
 }
 
 void controls_menu_open(void)
@@ -292,14 +297,14 @@ void controls_menu_draw(void)
 		         C.capture && i == C.sel ? "..." : key_names(controls_keys(MENU_ACTS[i]), k, sizeof k));
 		rows[i] = C.rows[i];
 	}
-	rows[N_MENU_ACTS] = "Defaults";
+	rows[N_MENU_ACTS] = zh_ui("K21", "Defaults");
 	rows[N_MENU_ACTS + 1] = "Back";
-	static const TouiButton prompts[3] = { { "Change", KEY_A }, { "Default", KEY_Y }, { "Back", KEY_B } };
+	const TouiButton prompts[3] = { { zh_ui("K22", "Change"), KEY_A }, { zh_ui("K23", "Default"), KEY_Y }, { "Back", KEY_B } };
 	static const TouiButton select[2] = { { "Select", KEY_A }, { "Back", KEY_B } };
-	static const TouiButton keep[1] = { { "Keep", KEY_START } };
+	const TouiButton keep[1] = { { zh_ui("K24", "Keep"), KEY_START } };
 	const TouiButton* b = C.capture ? keep : C.sel < N_MENU_ACTS ? prompts : select;
 	int nb = C.capture ? 1 : C.sel < N_MENU_ACTS ? 3 : 2;
-	touchui_menu(C.slot_set ? C.slot : TOUI_PAUSE, L() ? "Buttons (New 3DS)" : "Buttons (Old 3DS)", rows,
+	touchui_menu(C.slot_set ? C.slot : TOUI_PAUSE, L() ? zh_ui("K18", "Buttons (New 3DS)") : zh_ui("K17", "Buttons (Old 3DS)"), rows,
 	             N_MENU_ACTS + 2, &C.sel, b, nb);
 	if (!C.dirty)
 		return;

@@ -1,3 +1,4 @@
+#include "ui_review.h"
 #include "pausemenu.h"
 #include "events.h"
 #include "font.h"
@@ -20,7 +21,7 @@ static const char* str(int n)
 static bool s_on, s_can_save, s_ask;
 static int s_sel, s_yes;          // 0x9352b4; gPauseMenuQuitIndex (0 Yes, 1 No)
 static int s_touch_sel, s_touch_yes;
-static char s_place[48];
+static char s_place[256];
 static float s_time;
 
 void pausemenu_where(const char* place, float play_time)
@@ -41,21 +42,21 @@ static void touch(void)
 		touchui_menu_ex(TOUI_PAUSE, str(S_ASK), yesno, 2, &s_touch_yes, prompts, 2, 0, TOUI_ONE_TAP);
 		return;
 	}
-	const char* rows[7] = { str(S_ROW), str(S_ROW + 1), str(S_ROW + 2), str(S_ROW + 3), str(S_ROW + 4), "Map", "Memos" };
+	const char* rows[7] = { str(S_ROW), str(S_ROW + 1), str(S_ROW + 2), str(S_ROW + 3), str(S_ROW + 4), zh_ui("P10", "Map"), zh_ui("P11", "Memos") };
 	s_touch_sel = s_sel;
 	touchui_menu_ex(TOUI_PAUSE, str(S_TITLE), rows, 7, &s_touch_sel, prompts, 2, s_can_save ? 0 : 2, TOUI_ONE_TAP);
 }
 
-void pausemenu_open_at(bool can_save, int row)
+void pausemenu_open_at(bool can_save, int action)
 {
 	s_on = true;
 	s_can_save = can_save;
 	s_ask = false;
-	s_sel = row >= 0 && row < 7 ? row : 0;
+	s_sel = action >= PM_RESUME && action <= PM_MEMOS ? action - PM_RESUME : 0;
 	touch();
 }
 
-void pausemenu_open(bool can_save) { pausemenu_open_at(can_save, 0); }
+void pausemenu_open(bool can_save) { pausemenu_open_at(can_save, PM_RESUME); }
 
 void pausemenu_close(void)
 {
@@ -156,12 +157,11 @@ void pausemenu_draw_top(void)
 		text(256, 232, str(S_ASK), FONT_CENTER, grey, 0xff);
 		return;
 	}
-	text(256, 196, str(S_TITLE), FONT_CENTER, grey, 0xff);
+	font_draw_enlarged(FONT_BIG | FONT_PLUS_TWO, 196, zh_ui("PauseTopTitle", str(S_TITLE)), grey | 0xff, true);
 	// where James is and the play time, in the small font (the port's)
 	char t[24];
 	int s = (int)s_time;
 	snprintf(t, sizeof t, "%d:%02d:%02d", s / 3600, s / 60 % 60, s % 60);
-	if (s_place[0])
-		font_text(FONT_SMALL, 256, 244, s_place, FONT_CENTER, 0xc8c8c8c0, 0xc8c8c8c0);
-	font_text(FONT_SMALL, 256, s_place[0] ? 268 : 244, t, FONT_CENTER, 0xa0a0a0c0, 0xa0a0a0c0);
+	int place_lines = font_draw_enlarged(FONT_SMALL | FONT_PLUS_TWO, 244, s_place, 0xe8e8e8ff, true);
+	font_draw_enlarged(FONT_SMALL | FONT_PLUS_TWO, 244 + 34 * place_lines, t, 0xc8c8c8ff, true);
 }

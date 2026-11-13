@@ -1,3 +1,4 @@
+#include "ui_review.h"
 #include "figures.h"
 #include "font.h"
 #include <math.h>
@@ -109,7 +110,7 @@ float fig_text(const char* s, float x, float y, float w, int max, bool big, int 
 		if (s_log)
 			fprintf(s_log, "cut %s: %s\n", s_ctx ? s_ctx : "?", s);
 	}
-	float lh = font_line_px(f.font);
+	float lh = font_line_px(f.font) + (ev_language() == 2 ? 2.0f : 0.0f);
 	u32 c = fade(rgba, 1.0f);
 	for (int i = 0; i < f.n; i++)
 		put_text(f.font, x, y + i * lh, f.line[i], align, c);

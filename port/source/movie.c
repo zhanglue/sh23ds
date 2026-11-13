@@ -1,4 +1,6 @@
 #include "movie.h"
+#include "events.h"
+#include "font.h"
 #include "perf.h"
 #include "supersample.h"
 #include "gpusync.h"
@@ -60,6 +62,7 @@ static char s_status[64] = "no movie";
 // Current movie
 static bool s_active;
 static char s_name[24];
+static char s_movie_file[24];
 static plm_t* s_vplm;               // video, owned by the decoder thread while it runs
 static plm_t* s_aplm;               // audio, owned by the audio thread while it runs
 static int s_w, s_h, s_tracks;
@@ -109,9 +112,12 @@ static inline u32 load_acq(u32* p) { return __atomic_load_n(p, __ATOMIC_ACQUIRE)
 static inline void store_rel(u32* p, u32 v) { __atomic_store_n(p, v, __ATOMIC_RELEASE); }
 static double ms(u64 ticks) { return ticks / CPU_TICKS_PER_MSEC; }
 
-bool movie_init(C3D_RenderTarget* top)
+static void (*s_begin_ui)(void);
+
+bool movie_init(C3D_RenderTarget* top, void (*begin_ui)(void))
 {
 	s_top = top;
+	s_begin_ui = begin_ui;
 	s_dvlb = DVLB_ParseFile((u32*)movie_shbin, movie_shbin_size);
 	shaderProgramInit(&s_prog);
 	shaderProgramSetVsh(&s_prog, &s_dvlb->DVLE[0]);
@@ -317,6 +323,7 @@ bool movie_start(const char* name)
 	char file[24], path[96];
 	int track;
 	resolve(name, file, sizeof file, &track);
+	snprintf(s_movie_file, sizeof s_movie_file, "%s", file);
 	snprintf(path, sizeof path, MOVIE_DIR "/%s.mpg", file);
 	if (profile_movie_scale() > 1) {
 		// the low quality level plays the half-size set when the pack has it (movies.py --half):
@@ -855,12 +862,64 @@ static bool fade_in(void)
 
 static bool fade_out(void) { return fade(FADE_OUT, draw_black, NULL); }
 
+typedef struct { u16 start, end; } MovieCue;
+typedef struct {
+	const char* name;
+	int stage;
+	unsigned first;
+	const MovieCue* cues;
+	unsigned count;
+} MovieSubtitles;
+
+#include "movie_cues.h"
+
+static bool s_subtitles = true;
+
+void movie_set_subtitles(bool enabled)
+{
+	s_subtitles = enabled;
+}
+
+static const MovieSubtitles* open_subtitles(void)
+{
+	if (!s_subtitles || !s_begin_ui || !font_ready())
+		return NULL;
+	for (unsigned i = 0; i < sizeof movie_subtitles / sizeof movie_subtitles[0]; i++) {
+		const MovieSubtitles* sub = &movie_subtitles[i];
+		if (!strcmp(s_movie_file, sub->name))
+			return ev_movie_subtitles_open(sub->stage) ? sub : NULL;
+	}
+	return NULL;
+}
+
+static void draw_subtitles(const MovieSubtitles* sub)
+{
+	if (!sub)
+		return;
+	// Bink reports one-based frames. The pack's MPEG frames use the same 29.97 fps.
+	u32 frame = s_front_idx + 1;
+	for (unsigned i = 0; i < sub->count; i++) {
+		const MovieCue* cue = &sub->cues[i];
+		if (frame <= cue->start)
+			break;
+		if (frame > cue->end)
+			continue;
+		const char* text = ev_movie_subtitle(sub->first + i);
+		if (!text || !*text)
+			break;
+		s_begin_ui();
+		font_draw_subtitle(text);
+		break;
+	}
+}
+
 bool movie_play(const char* name)
 {
 	if (s_skip_all)
 		return true;                 // playtest.c: movies count as watched
 	if (!movie_start(name))
 		return false;
+	const MovieSubtitles* subtitles = open_subtitles();
 	// The title's game start sound (main.c) belongs to the title: when New Game goes straight into
 	// the opening movie it ends there instead of resuming mid-sound a minute later.
 	sfx_stop(SFX_GAME_START);
@@ -889,6 +948,7 @@ bool movie_play(const char* name)
 		C3D_RenderTargetClear(s_top, C3D_CLEAR_ALL, 0x000000FF, 0);
 		C3D_FrameDrawOn(s_top);
 		movie_draw();
+		draw_subtitles(subtitles);
 		touchui_frame();
 		C3D_FrameEnd(0);
 		if ((frame++ % 15) == 0)
@@ -896,6 +956,7 @@ bool movie_play(const char* name)
 		// every frame: lets a screenshot tell which frame the player thinks is up, and when
 		printf("\x1b[15;2Hframe %5lu at %8.3f s  ", (unsigned long)s_front_idx, s_clock);
 	}
+	ev_movie_subtitles_close();
 	movie_stop();
 	if (alive)
 		alive = fade_out();

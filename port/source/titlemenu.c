@@ -122,7 +122,7 @@ static void touch(void)
 {
 	static const TouiButton prompts[2] = { { "Select", KEY_A }, { "Back", KEY_B } };
 	static const TouiButton play[2] = { { "Play", KEY_A }, { "Back", KEY_B } };
-	static char text[24][48];
+	static char text[24][128];
 	const char* rows[24];
 	int n = 0;
 	switch (s_screen) {
@@ -363,8 +363,10 @@ bool titlemenu_draw_top(MapDrawFn draw, float bright)
 			return true;
 		float b = s_boot_b < 0.0f ? 0.0f : s_boot_b > 1.0f ? 1.0f : s_boot_b;
 		u32 c = (u32)(b * 255.0f) & 0xff;
-		MapVert v[6] = { { 40, 0, 0, 0 }, { 360, 0, 1, 0 }, { 360, 240, 1, 1 },
-		                 { 40, 0, 0, 0 }, { 360, 240, 1, 1 }, { 40, 240, 0, 1 } };
+		const float left = s_boot_pic == 0 ? 40.0f : 0.0f;
+		const float right = 400.0f - left;
+		MapVert v[6] = { { left, 0, 0, 0 }, { right, 0, 1, 0 }, { right, 240, 1, 1 },
+		                 { left, 0, 0, 0 }, { right, 240, 1, 1 }, { left, 240, 0, 1 } };
 		draw(&s_boot[s_boot_pic], v, 6, c << 24 | c << 16 | c << 8 | 0xff);
 		return true;
 	}
@@ -412,7 +414,11 @@ bool titlemenu_draw_top(MapDrawFn draw, float bright)
 	case SC_MOVIES:
 		item(256, 324, msg(210, "Movie Menu"), false, bright);
 		if (s_movie_n)
-			item(256, 350, msg(214 + s_movie_msg[s_sel], MOVIE_FILE[s_movie_msg[s_sel]]), true, bright);
+			{
+			const char* name = msg(214 + s_movie_msg[s_sel], MOVIE_FILE[s_movie_msg[s_sel]]);
+			u32 grey = (u32)(254 * bright) & 0xff;
+			font_draw_enlarged(FONT_SMALL | FONT_PLUS_FOUR, 350, name, grey * 0x01010100u | 0xff, false);
+		}
 		break;
 	}
 	return s_bg_ok;

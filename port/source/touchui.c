@@ -1,3 +1,4 @@
+#include "ui_review.h"
 #include "touchui.h"
 #include "audio.h"
 #include "bgm.h"
@@ -29,16 +30,16 @@
 
 typedef struct {
 	bool on;
-	char title[192];       // a stage program's question can be long (wrapped, draw_menu)
-	char rows[MAX_ROWS][72];     // the other languages' rows run longer than the English ones
+	char title[2048];       // a stage program's question can be long (wrapped, draw_menu)
+	char rows[MAX_ROWS][256];     // the other languages' rows run longer than the English ones
 	int n, shown_sel;
 	int* sel;
-	char blabel[MAX_BUTTONS][16];
+	char blabel[MAX_BUTTONS][32];
 	u32 bkey[MAX_BUTTONS];
 	int nb;
 	u64 dim;
 	int flags;
-	char tabs[TOUI_MAX_TABS][16];    // the Options' tabs (none: the title)
+	char tabs[TOUI_MAX_TABS][48];    // the Options' tabs (none: the title)
 	int ntabs, shown_tab;
 	int* tab;
 	TouiRow kinds[MAX_ROWS];
@@ -49,13 +50,21 @@ typedef struct { float x0, y0, x1, y1; u8 kind, menu; s16 row; u32 key; } Hit;
 typedef struct { float x, y, u, v; u8 c[4]; } Vert;
 
 static Menu s_menus[TOUI_MENUS];
-static char s_box[700];
-static char s_box_label[MAX_BUTTONS][16];
+static char s_box[2048];
+static bool s_subtitle_box;
+static char s_box_label[MAX_BUTTONS][32];
 static u32 s_box_key[MAX_BUTTONS];
 static int s_box_nb;
 static bool s_box_on;
-static char s_panel[512];
+static char s_panel[2048];
 static bool s_debug, s_movie, s_dirty = true;
+static u64 s_credit_until;
+
+void touchui_author_credit(bool show)
+{
+	s_credit_until = show ? osGetTime() + 2500 : 0;
+	s_dirty = true;
+}
 static int s_cond = -1;              // 0 Fine, 1 Caution, 2 Danger (the help screen's thresholds)
 static char s_weapon[40];
 static int s_heal[3];                // the healing items' counts (the quick slots)
@@ -65,10 +74,10 @@ static bool s_act_attack;          // Action attacks now (touchui_action_attacks
 static int s_quick, s_quick_item;    // a quick slot tapped, for touchui_quick
 typedef struct {                     // the first run's two choices (touchui_choices)
 	bool on;
-	char name[2][40], line[2][160];
+	char name[2][64], line[2][256];
 	int* sel;
 	int shown;
-	char blabel[MAX_BUTTONS][16];
+	char blabel[MAX_BUTTONS][32];
 	u32 bkey[MAX_BUTTONS];
 	int nb;
 	u32 dim;
@@ -92,6 +101,7 @@ static int s_uProj;
 static C3D_Mtx s_proj;
 static Vert* s_verts;            // linear memory, reused for every redraw
 static int s_nsolid, s_ntext;    // solids from the front of s_verts, glyphs from IMAGE_END
+static int s_nsubtitle;         // subtitle glyphs precede the ordinary footer glyphs
 static int s_nimage;             // picture vertices from SOLID_END
 static struct { C3D_Tex* tex; int first, count; } s_images[MAX_IMAGES];
 static int s_nimages;
@@ -104,7 +114,7 @@ static float s_mini_zoom = MINI_NEAR;
 static u32 s_mini_key;
 static bool s_map_on, s_map_zoomed;
 static bool s_map_readable = true;
-static char s_map_name[48];
+static char s_map_name[128];
 static PrintConsole s_console;
 static u16* s_offscreen;         // where the console writes while it is not shown
 
@@ -174,11 +184,11 @@ void touchui_init(void)
 
 // ---------------------------------------------------------------- what is shown
 
-static void copy_buttons(char label[][16], u32* key, int* nb, const TouiButton* b, int n)
+static void copy_buttons(char label[][32], u32* key, int* nb, const TouiButton* b, int n)
 {
 	*nb = n > MAX_BUTTONS ? MAX_BUTTONS : n < -1 ? -1 : n;
 	for (int i = 0; i < *nb; i++) {
-		snprintf(label[i], 16, "%s", b[i].label);
+		snprintf(label[i], 32, "%s", b[i].label);
 		key[i] = b[i].key;
 	}
 }
@@ -265,7 +275,7 @@ void touchui_choices_close(void)
 	}
 }
 
-void touchui_box(const char* text, const TouiButton* buttons, int nbuttons)
+static void set_box(const char* text, const TouiButton* buttons, int nbuttons, bool subtitle)
 {
 	bool on = text != NULL;
 	char box[sizeof s_box];
@@ -273,21 +283,32 @@ void touchui_box(const char* text, const TouiButton* buttons, int nbuttons)
 	for (; text && text[n] && text[n] != '\f' && n < (int)sizeof box - 1; n++)
 		box[n] = text[n];
 	box[n] = 0;
-	char label[MAX_BUTTONS][16];
+	char label[MAX_BUTTONS][32];
 	u32 key[MAX_BUTTONS];
 	int nb;
 	memset(label, 0, sizeof label);
 	memset(key, 0, sizeof key);
 	copy_buttons(label, key, &nb, buttons, nbuttons);
-	if (on != s_box_on || strcmp(box, s_box) || nb != s_box_nb || memcmp(label, s_box_label, sizeof label) ||
+	if (subtitle != s_subtitle_box || on != s_box_on || strcmp(box, s_box) || nb != s_box_nb || memcmp(label, s_box_label, sizeof label) ||
 	    memcmp(key, s_box_key, sizeof key)) {
 		s_box_on = on;
+		s_subtitle_box = subtitle;
 		memcpy(s_box, box, sizeof box);
 		memcpy(s_box_label, label, sizeof label);
 		memcpy(s_box_key, key, sizeof key);
 		s_box_nb = nb;
 		s_dirty = true;
 	}
+}
+
+void touchui_box(const char* text, const TouiButton* buttons, int nbuttons)
+{
+	set_box(text, buttons, nbuttons, false);
+}
+
+void touchui_subtitle_box(const char* text, const TouiButton* buttons, int nbuttons)
+{
+	set_box(text, buttons, nbuttons, true);
 }
 
 void touchui_panel(const char* text)
@@ -606,7 +627,7 @@ static void glyph(float x, float cy, u32 key, u32 c)
 
 // The prompts under the footer's rule, each in an equal share of the width; a dim prompt can't be
 // taken (no hit).
-static void footer(char label_[][16], const u32* key, int n, u32 dim)
+static void footer(char label_[][32], const u32* key, int n, u32 dim)
 {
 	if (!n)
 		return;
@@ -615,11 +636,21 @@ static void footer(char label_[][16], const u32* key, int n, u32 dim)
 	for (int i = 0; i < n; i++) {
 		bool off = dim >> i & 1;
 		u32 c = off ? DIM : RING;
-		float gw = glyph_width(key[i]), lw = font_width_px(FONT_SMALL, label_[i]);
+		static const char* const names[] = { "Select", "Back", "OK", "Play", "Skip", "Use", "Examine", "Mark", "Combine", "Read", "Next", "Continue" };
+		const char* caption = label_[i];
+		for (unsigned j = 0; j < sizeof names / sizeof *names; j++) {
+			if (strcmp(caption, names[j]) == 0) {
+				char id[8];
+				snprintf(id, sizeof id, "B%02u", j + 1);
+				caption = zh_ui(id, caption);
+				break;
+			}
+		}
+		float gw = glyph_width(key[i]), lw = font_width_px(FONT_SMALL, caption);
 		float w = gw + (gw > 0 && lw > 0 ? 5.0f : 0.0f) + lw;
 		float x = 8 + slot * i + (slot - w) * 0.5f;
 		glyph(x, cy, key[i], c);
-		text(FONT_SMALL, x + w - lw, cy - font_line_px(FONT_SMALL) * 0.5f, label_[i], FONT_LEFT, off ? DIM : s_grey_top,
+		text(FONT_SMALL, x + w - lw, cy - font_line_px(FONT_SMALL) * 0.5f, caption, FONT_LEFT, off ? DIM : s_grey_top,
 		     off ? DIM : s_grey_bottom);
 		if (!off)
 			hit(8 + slot * i, FOOT_Y + 1, 8 + slot * (i + 1), 240, HIT_KEY, 0, 0, key[i]);
@@ -652,18 +683,13 @@ static void header(const char* title)
 }
 
 // A touch pad (the map's and the panels' arrows): a dark cell with a thin edge.
-static void pad(float x0, float y0, float x1, float y1, const char* label_, u32 key, int dx, int dy)
+static void pad(float x0, float y0, float x1, float y1, u32 key, int dx, int dy, float size)
 {
 	rect(x0, y0, x1, y1, PAD, PAD);
 	outline(x0, y0, x1, y1, RULE);
 	float cx = (x0 + x1) * 0.5f, cy = (y0 + y1) * 0.5f;
-	if (label_ && *label_) {
-		if (dx || dy)
-			arrow(cx, y0 + 9, dx, dy, 4.0f, RING), cy += 4;
-		text(FONT_SMALL, cx, cy - font_line_px(FONT_SMALL) * 0.5f, label_, FONT_CENTER, s_grey_top, s_grey_bottom);
-	} else {
-		arrow(cx, cy, dx, dy, 6.0f, RING);
-	}
+	// The tip extends farther than the base. Offset it to centre the visible bounds.
+	arrow(cx - dx * size * 0.2f, cy - dy * size * 0.2f, dx, dy, size, RING);
 	hit(x0, y0, x1, y1, HIT_KEY, 0, 0, key);
 }
 
@@ -678,11 +704,11 @@ static void draw_tabs(const Menu* m, int id)
 	hit(0, 0, 24, 28, HIT_KEY, 0, 0, KEY_L);
 	glyph(301, 13, KEY_R, RING);
 	hit(296, 0, 320, 28, HIT_KEY, 0, 0, KEY_R);
-	char up[TOUI_MAX_TABS][16];
+	char up[TOUI_MAX_TABS][48];
 	float w[TOUI_MAX_TABS], total = 0.0f;
 	for (int i = 0; i < m->ntabs; i++) {
 		int k = 0;
-		for (; m->tabs[i][k] && k < 15; k++)
+		for (; m->tabs[i][k] && k < 47; k++)
 			up[i][k] = m->tabs[i][k] >= 'a' && m->tabs[i][k] <= 'z' ? m->tabs[i][k] - 32 : m->tabs[i][k];
 		up[i][k] = 0;
 		w[i] = spaced_width(FONT_SMALL, up[i], 1.0f);
@@ -720,7 +746,7 @@ static void blocks(float x1, float cy, int level, int max, bool on)
 static float wrapped_title(const char* s)
 {
 	int f = FONT_BIG;
-	char lines[8][96];
+	char lines[8][256];
 	int n = 0;
 	for (int pass = 0; pass < 2; pass++, f = FONT_SMALL) {
 		n = 0;
@@ -729,13 +755,18 @@ static float wrapped_title(const char* s)
 			while (*c == ' ')
 				c++;
 			int len = 0, cut = 0;
-			char ln[96];
-			while (c[len] && len < 95) {
-				snprintf(ln, sizeof ln, "%.*s", len + 1, c);
+			char ln[256];
+			while (c[len]) {
+				char one[6];
+				const char* end = one_char(c + len, one);
+				int next = (int)(end - c);
+				if (next >= (int)sizeof ln)
+					break;
+				snprintf(ln, sizeof ln, "%.*s", next, c);
 				if (font_width_px(f, ln) > 290.0f)
 					break;
-				len++;
-				if (c[len] == ' ' || !c[len])
+				len = next;
+				if (c[len] == ' ' || !c[len] || one[0] == FONT_FULL_WIDTH)
 					cut = len;
 			}
 			if (!cut)
@@ -876,7 +907,17 @@ static void draw_box(void)
 	int f = lines > 9 ? FONT_SMALL : FONT_BIG;
 	float y = lines > 9 ? 10 : 18;
 	char ln[96];
-	for (const char* s = s_box; *s; ) {
+	if (s_subtitle_box) {
+		static FontVert fv[6 * 384];
+		int n = font_subtitle_px(s_box, 320.0f, FOOT_Y - 5.0f, fv, 6 * 384);
+		for (int i = 0; i < n && IMAGE_END + s_ntext < MAX_VERTS; i++) {
+			u32 c = fv[i].rgba;
+			s_verts[IMAGE_END + s_ntext++] = (Vert){ fv[i].x, fv[i].y, fv[i].u, fv[i].v,
+				{ c >> 24, c >> 16 & 0xff, c >> 8 & 0xff, c & 0xff } };
+		}
+		s_nsubtitle = s_ntext;
+	}
+	for (const char* s = s_box; !s_subtitle_box && *s; ) {
 		const char* e = strchr(s, '\n');
 		int n = e ? (int)(e - s) : (int)strlen(s);
 		snprintf(ln, sizeof ln, "%.*s", n < 95 ? n : 95, s);
@@ -890,7 +931,7 @@ static void draw_box(void)
 	if (s_box_nb) {
 		footer(s_box_label, s_box_key, s_box_nb, 0);
 	} else {
-		static char next[1][16] = { "Next" };
+		static char next[1][32] = { "Continue" };
 		static const u32 a[1] = { KEY_A };
 		footer(next, a, 1, 0);
 	}
@@ -902,7 +943,7 @@ static void draw_box(void)
 // console's ">" cursor gets the red band.
 static void draw_panel(void)
 {
-	char body[512], help[160] = "";
+	char body[2048], help[160] = "";
 	snprintf(body, sizeof body, "%s", s_panel);
 	for (char* ln = body; ln && *ln; ) {
 		// a line of keys: one with "A: ", "D-pad: ", "Left/Right: " or "Up/Down: " in it
@@ -970,12 +1011,12 @@ static void draw_panel(void)
 		float cx = 272, cy = 150, r = 15;
 		if (pad_verb[0])
 			label(cx, cy - 3 * r - 6, pad_verb, FONT_CENTER);
-		pad(cx - r, cy - 3 * r, cx + r, cy - r, "", KEY_DUP, 0, -1);
-		pad(cx - r, cy + r, cx + r, cy + 3 * r, "", KEY_DDOWN, 0, 1);
-		pad(cx - 3 * r, cy - r, cx - r, cy + r, "", KEY_DLEFT, -1, 0);
-		pad(cx + r, cy - r, cx + 3 * r, cy + r, "", KEY_DRIGHT, 1, 0);
+		pad(cx - r, cy - 3 * r, cx + r, cy - r, KEY_DUP, 0, -1, 6.0f);
+		pad(cx - r, cy + r, cx + r, cy + 3 * r, KEY_DDOWN, 0, 1, 6.0f);
+		pad(cx - 3 * r, cy - r, cx - r, cy + r, KEY_DLEFT, -1, 0, 6.0f);
+		pad(cx + r, cy - r, cx + 3 * r, cy + r, KEY_DRIGHT, 1, 0, 6.0f);
 	}
-	char labels[2][16];
+	char labels[2][32];
 	snprintf(labels[0], 16, "%s", a_verb);
 	snprintf(labels[1], 16, "Back");
 	static const u32 keys[2] = { KEY_A, KEY_B };
@@ -1014,7 +1055,7 @@ static void draw_play(bool waiting)
 	if (!s_map_readable)
 		text(FONT_SMALL, 110, 103 - sl * 0.5f, "Too dark to read", FONT_CENTER, DIM, DIM);
 	else if (!map_mini(&pl, image, 7, 7, 213, 199, s_mini_zoom))
-		text(FONT_SMALL, 110, 103 - sl * 0.5f, "No map", FONT_CENTER, DIM, DIM);
+		text(FONT_SMALL, 110, 103 - sl * 0.5f, zh_ui("No map", "No map"), FONT_CENTER, DIM, DIM);
 	hit(6, 6, 214, 200, HIT_PASS, 0, 0, 0);
 	if (s_map_readable) {
 		// the zoom ring in the map's corner, drawn with the pictures so the map never covers it
@@ -1041,7 +1082,7 @@ static void draw_play(bool waiting)
 	static const char* const word[3] = { "Fine", "Caution", "Danger" };
 	static const u32 col[3] = { 0x40d040ff, 0xe0c030ff, 0xe03020ff };
 	int c = s_cond < 0 ? 0 : s_cond;
-	label(224, 6, "Condition", FONT_LEFT);
+	label(224, 6, zh_ui("Condition", "Condition"), FONT_LEFT);
 	rect(222, 19, 314, 55, PANEL, PANEL);
 	outline(222, 19, 314, 55, RULE);
 	static const float beat[] = { 0, 0, 0.1f, -0.15f, 0.1f, 0, 0, 0.05f, -0.9f, 0.7f, -0.1f, 0, 0.12f, 0.18f, 0.08f, 0, 0 };
@@ -1049,7 +1090,7 @@ static void draw_play(bool waiting)
 	float amp = c == 0 ? 15.0f : c == 1 ? 11.0f : 7.0f, step = 86.0f / (nb - 1);
 	for (int i = 0; i + 1 < nb; i++)
 		line(225 + i * step, 37 + beat[i] * amp, 225 + (i + 1) * step, 37 + beat[i + 1] * amp, 1.4f, col[c]);
-	text(FONT_BIG, 268, 58, word[c], FONT_CENTER, col[c], col[c]);
+	text(FONT_BIG, 268, 58, zh_ui(word[c], word[c]), FONT_CENTER, col[c], col[c]);
 
 	// the weapon: "name  loaded / spare", the name, then the rounds below it
 	char name[40], rounds[24] = "";
@@ -1061,7 +1102,7 @@ static void draw_play(bool waiting)
 			;
 		snprintf(rounds, sizeof rounds, "%s", gap);
 	}
-	label(224, 80, "Weapon", FONT_LEFT);
+	label(224, 80, zh_ui("Weapon", "Weapon"), FONT_LEFT);
 	if (name[0]) {
 		int f = font_width_px(FONT_BIG, name) > 80.0f ? FONT_SMALL : FONT_BIG;
 		text_lit(f, 224, 94 + (f == FONT_SMALL ? 2 : 0), name, FONT_LEFT, s_white);
@@ -1074,17 +1115,17 @@ static void draw_play(bool waiting)
 		else
 			hit(220, 76, 318, 124, HIT_QUICK, 0, 0, 0);    // unbound: the tap is the next weapon itself
 	} else {
-		text(FONT_SMALL, 224, 96, "None", FONT_LEFT, DIM, DIM);
+		text(FONT_SMALL, 224, 96, zh_ui("None", "None"), FONT_LEFT, DIM, DIM);
 	}
 
 	// the quick slots: the three healing items
 	static const char* const heal[3] = { "Drink", "First Aid", "Ampoule" };
-	label(224, 132, "Healing", FONT_LEFT);
+	label(224, 132, zh_ui("Healing", "Healing"), FONT_LEFT);
 	for (int i = 0; i < 3; i++) {
 		float y = 146 + 18 * i;
 		bool have = s_heal[i] > 0;
 		u32 t = have ? s_grey_top : DIM, b = have ? s_grey_bottom : DIM;
-		text(FONT_SMALL, 224, y + 3, heal[i], FONT_LEFT, t, b);
+		text(FONT_SMALL, 224, y + 3, zh_ui(heal[i], heal[i]), FONT_LEFT, t, b);
 		char n[8];
 		snprintf(n, sizeof n, "x%d", s_heal[i]);
 		text(FONT_SMALL, 312, y + 3, n, FONT_RIGHT, t, b);
@@ -1096,16 +1137,19 @@ static void draw_play(bool waiting)
 		// a message on the top screen: the whole page is its A
 		s_nhits = 0;
 		hit(0, 0, 320, 240, HIT_KEY, 0, 0, KEY_A);
-		static char next[1][16] = { "Next" };
+		static char next[1][32] = { "Continue" };
 		static const u32 a[1] = { KEY_A };
 		footer(next, a, 1, 0);
 		return;
 	}
 	// the map is the map itself: a tap on it opens it, so it has no prompt. Action says what a
 	// press does now: attack (the weapon up) or check
-	char labels[4][16] = { "Check", "Items", "Light", "Pause" };
-	if (s_act_attack)
-		snprintf(labels[0], sizeof labels[0], "Attack");
+	char labels[4][32];
+	const char* action = s_act_attack ? "Attack" : "Check";
+	snprintf(labels[0], sizeof labels[0], "%s", zh_ui(action, action));
+	snprintf(labels[1], sizeof labels[1], "%s", zh_ui("Items", "Items"));
+	snprintf(labels[2], sizeof labels[2], "%s", zh_ui("Light", "Light"));
+	snprintf(labels[3], sizeof labels[3], "%s", zh_ui("Pause", "Pause"));
 	u32 keys[4] = { bound(ACT_ACTION), bound(ACT_ITEMS), bound(ACT_FLASHLIGHT), KEY_START };
 	footer(labels, keys, 4, s_have_light ? 0 : 4);
 }
@@ -1114,7 +1158,7 @@ static void draw_play(bool waiting)
 // zoomed in, the arrows scroll for as long as they are held.
 static void draw_map(void)
 {
-	header(s_map_name);
+	header(s_map_name[0] ? s_map_name : zh_ui("P10", "Map"));
 	if (s_map_zoomed) {
 		// zoomed in: the page is a pad that moves the map under the finger
 		float lh = font_line_px(FONT_SMALL);
@@ -1122,19 +1166,19 @@ static void draw_map(void)
 		outline(16, 34, 304, 198, RULE);
 		arrow(160, 60, 0, -1, 5.0f, DIM), arrow(160, 172, 0, 1, 5.0f, DIM);
 		arrow(60, 116, -1, 0, 5.0f, DIM), arrow(260, 116, 1, 0, 5.0f, DIM);
-		text(FONT_SMALL, 160, 116 - lh * 0.5f, "Drag to move the map", FONT_CENTER, s_grey_top, s_grey_bottom);
+		text(FONT_SMALL, 160, 116 - lh * 0.5f, zh_ui("M02", "Drag to move the map"), FONT_CENTER, s_grey_top, s_grey_bottom);
 		hit(16, 34, 304, 198, HIT_DRAG, 0, 0, 0);
 	} else {
 		// behind the pads, a drag moves the full-width sheet up and down (map.c)
 		hit(16, 34, 304, 198, HIT_DRAG, 0, 0, 0);
-		pad(110, 40, 210, 80, "Floor up", KEY_DUP, 0, -1);
-		pad(110, 140, 210, 180, "Floor down", KEY_DDOWN, 0, 1);
-		pad(20, 90, 104, 130, "Other map", KEY_DLEFT, -1, 0);
-		pad(216, 90, 300, 130, "Other map", KEY_DRIGHT, 1, 0);
+		pad(110, 40, 210, 80, KEY_DUP, 0, -1, 12.5f);
+		pad(110, 140, 210, 180, KEY_DDOWN, 0, 1, 12.5f);
+		pad(20, 90, 104, 130, KEY_DLEFT, -1, 0, 12.5f);
+		pad(216, 90, 300, 130, KEY_DRIGHT, 1, 0, 12.5f);
 	}
-	static char la[2][16];
-	snprintf(la[0], 16, "%s", s_map_zoomed ? "Zoom out" : "Zoom in");
-	snprintf(la[1], 16, "Back");
+	static char la[2][32];
+	snprintf(la[0], sizeof la[0], "%s", s_map_zoomed ? zh_ui("M07", "Zoom out") : zh_ui("M06", "Zoom in"));
+	snprintf(la[1], sizeof la[1], "%s", zh_ui("M08", "Back"));
 	static const u32 keys[2] = { KEY_A, KEY_B };
 	footer(la, keys, 2, 0);
 }
@@ -1160,7 +1204,7 @@ void touchui_map(bool open)
 
 static void draw_movie(void)
 {
-	static char skip[1][16] = { "Skip" };
+	static char skip[1][32] = { "Skip" };
 	static const u32 keys[1] = { KEY_START };
 	footer(skip, keys, 1, 0);
 }
@@ -1246,6 +1290,8 @@ void touchui_frame(void)
 		return;
 	if (top_menu() < 0 && !s_panel[0] && !s_movie && !s_map_on)
 		status_check();
+	if (s_credit_until && osGetTime() >= s_credit_until)
+		touchui_author_credit(false);
 	u64 now = svcGetSystemTick();
 	if (s_press_tick && now - s_press_tick > SYSCLOCK_ARM11 / 7) {
 		s_press_tick = 0;                // the tapped prompt goes out again
@@ -1262,6 +1308,7 @@ void touchui_frame(void)
 		return;
 	s_dirty = false;
 	s_nsolid = s_ntext = s_nhits = s_nimage = s_nimages = 0;
+	s_nsubtitle = 0;
 	backdrop();
 	int m = top_menu();
 	if (s_movie)
@@ -1280,6 +1327,11 @@ void touchui_frame(void)
 		draw_play(s_box_on);
 	if (s_press_tick)
 		band(s_press[0], s_press[1], s_press[2], s_press[3]);
+	if (s_credit_until && m == TOUI_OPTIONS) {
+		const char* credit = zh_ui("AuthorCredit", "");
+		text(FONT_SMALL, 304, 223.0f - font_line_px(FONT_SMALL) * 0.5f,
+		     credit, FONT_RIGHT, s_white, s_white);
+	}
 	if (s_grain_ok) {
 		static const MapVert gv[6] = { { 0, 0, 0, 0 }, { 320, 0, 5, 0 }, { 320, 240, 5, 3.75f },
 		                               { 0, 0, 0, 0 }, { 320, 240, 5, 3.75f }, { 0, 240, 0, 3.75f } };
@@ -1316,8 +1368,14 @@ void touchui_frame(void)
 		C3D_TexEnvInit(env);
 		C3D_TexEnvSrc(env, C3D_Both, GPU_TEXTURE0, GPU_PRIMARY_COLOR, 0);
 		C3D_TexEnvFunc(env, C3D_Both, GPU_MODULATE);
-		C3D_TexBind(0, font_texture());
-		C3D_DrawArrays(GPU_TRIANGLES, IMAGE_END, s_ntext);
+		if (s_nsubtitle) {
+			C3D_TexBind(0, font_subtitle_texture());
+			C3D_DrawArrays(GPU_TRIANGLES, IMAGE_END, s_nsubtitle);
+		}
+		if (s_ntext > s_nsubtitle) {
+			C3D_TexBind(0, font_texture());
+			C3D_DrawArrays(GPU_TRIANGLES, IMAGE_END + s_nsubtitle, s_ntext - s_nsubtitle);
+		}
 	}
 }
 

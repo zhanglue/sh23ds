@@ -1,3 +1,5 @@
+#define ZH_OPTIONS
+#include "ui_review.h"
 #include "optmenu.h"
 #include "profile.h"
 #include "controls.h"
@@ -46,6 +48,8 @@ static Options s_old;            // as they were when the screen opened
 static OptHost s_host;
 static int s_state = ST_OFF, s_page, s_tab, s_sel, s_shown_tab, s_shown_sel, s_bright_sel, s_yes = 1;
 static int s_tab_sel[TAB_N];     // the row last chosen on each tab (kept for the next opening)
+static u64 s_credit_hold;
+static bool s_credit_fired;
 static const Setting* s_rows[MAX_ROWS];
 static int s_n;
 static u64 s_focus_ms;           // when the chosen row came up: its drawings start from there
@@ -76,7 +80,7 @@ void opt_defaults(Options* o)
 	o->control_type = 1;         // Directional Style: the stick points where James goes
 	o->view = 1;                 // View Control Switch: Look is on the D-Pad, under the thumb that steers
 	o->inf_stamina = 1;
-	o->lang = (u8)ev_system_language();   // 0x4f6cc0 when there is no language.ini
+	o->lang = 2;   // 0x4f6cc0 when there is no language.ini
 }
 
 typedef struct { const char* key; size_t off; u8 lo, hi; } Key;
@@ -329,7 +333,7 @@ static const Setting SETTINGS[] = {
 	{ .tab = TAB_SOUND, .kind = K_BAR, .label = 42, .name = "SE Volume", AT(se), .hi = 15,
 	  .what = "Sound effects and voices." },
 	// System: the language and the hardware profile (profile.c)
-	{ .tab = TAB_SYSTEM, .label = 76, .name = "Language", AT(lang), .lo = 1, .hi = 5, .names = LANGUAGE,
+	{ .tab = TAB_SYSTEM, .label = 76, .name = "Language", AT(lang), .lo = 1, .hi = 2, .names = LANGUAGE,
 	  .what = "The language of the game's text." },
 	{ .tab = TAB_SYSTEM, .label = -1, .name = "Quality", AT(quality), .hi = 2, .texts = QUALITY,
 	  .what = "How much the console draws.", .lines = QUALITY_L },
@@ -379,19 +383,19 @@ static const char* expand(const char* src, char* out, size_t n)
 			out[k++] = *p++;
 			continue;
 		}
-		char tok[16], val[96] = "", key[24];
+		char tok[16], val[160] = "", key[24];
 		snprintf(tok, sizeof tok, "%.*s", (int)(e - p - 1), p + 1);
 		if (!strcmp(tok, "AIM")) key_of(ACT_AIM, val, sizeof val);
 		else if (!strcmp(tok, "RUN")) key_of(ACT_RUN, val, sizeof val);
 		else if (!strcmp(tok, "ACT")) key_of(ACT_ACTION, val, sizeof val);
 		else if (!strcmp(tok, "LOOK")) key_of(ACT_LOOK, val, sizeof val);
 		else if (!strcmp(tok, "CAMTURN"))   // tpcam.c: the C-Stick on the New 3DS layout, the D-Pad's free directions on the Old
-			snprintf(val, sizeof val, "%s, and %s puts it back.",
-			         layout() == CONTROLS_LAYOUT_NEW ? "The C-Stick turns it" : "The D-Pad or a drag turns it",
-			         key_of(ACT_LOOK, key, sizeof key));
-		else if (!strcmp(tok, "AUTOQ")) snprintf(val, sizeof val, "%s", profile_new() ? "High" : "Low");
+			snprintf(val, sizeof val, ev_language() == 2 ? "%s, %s%s" : "%s, and %s puts it back.%s",
+			         layout() == CONTROLS_LAYOUT_NEW ? zh_ui("The C-Stick turns it", "The C-Stick turns it") : zh_ui("The D-Pad or a drag turns it", "The D-Pad or a drag turns it"),
+			         key_of(ACT_LOOK, key, sizeof key), zh_ui("ResetCamera", ""));
+		else if (!strcmp(tok, "AUTOQ")) snprintf(val, sizeof val, "%s", profile_new() ? zh_ui("High", "High") : zh_ui("Low", "Low"));
 		else if (!strcmp(tok, "AUTOFPS")) snprintf(val, sizeof val, "%d", profile_quality() == QUALITY_LOW ? 30 : 60);
-		else if (!strcmp(tok, "CONSOLE")) snprintf(val, sizeof val, "%s", profile_console_new() ? "New" : "Old");
+		else if (!strcmp(tok, "CONSOLE")) snprintf(val, sizeof val, "%s", profile_console_new() ? zh_ui("New", "New") : zh_ui("Old", "Old"));
 		k += snprintf(out + k, n - k, "%s", val);
 		k = k < n ? k : n - 1;
 		p = e + 1;
@@ -400,7 +404,12 @@ static const char* expand(const char* src, char* out, size_t n)
 	return out;
 }
 
-static const char* label(const Setting* s) { return s->label >= 0 ? msg(s->label, s->name) : s->name; }
+static const char* label(const Setting* s)
+{
+	if (ev_language() == 2)
+		return zh_settings[s - SETTINGS].name;
+	return s->label >= 0 ? msg(s->label, s->name) : s->name;
+}
 
 static const char* value_name(const Setting* s, int v, char* buf, int size)
 {
@@ -420,6 +429,10 @@ static const char* value_name(const Setting* s, int v, char* buf, int size)
 	int i = v - s->lo;
 	if (i < 0 || i > s->hi - s->lo)
 		i = 0;
+	if (is_lang(s))
+		return v == 2 ? zh_ui("LanguageChinese", "Chinese") : (ev_language() == 2 ? zh_settings[s - SETTINGS].values[0] : "English");
+	if (ev_language() == 2 && i < 4 && zh_settings[s - SETTINGS].values[i])
+		return expand(zh_settings[s - SETTINGS].values[i], buf, size);
 	if (s->names && s->names[i] >= 0)
 		return msg(s->names[i], "");
 	return expand(s->texts ? s->texts[i] : "", buf, size);
@@ -440,8 +453,8 @@ static void build(void)
 static const char* page_title(int page)
 {
 	if (page == PG_BRIGHT)
-		return msg(2, "Brightness Level");
-	return ev_language() == 1 ? "Options" : msg(23, "Options");   // "Option" in English
+		return zh_ui("BrightnessTitle", msg(2, "Brightness Level"));
+	return zh_ui("OptionTitle", "Options");
 }
 
 static int s_touch_answer;          // the question's row on the touch screen: 0 Yes, 1 No
@@ -459,7 +472,7 @@ static void touch(void)
 		                TOUI_ONE_TAP);
 		return;
 	}
-	static char text[MAX_ROWS][72];
+	static char text[MAX_ROWS][160];
 	const char* rows[MAX_ROWS];
 	if (s_page == PG_BRIGHT) {
 		snprintf(text[0], sizeof text[0], "Level   < %d >", s_live->bright);
@@ -484,7 +497,9 @@ static void touch(void)
 			dim |= 1ull << i;
 		rows[i] = text[i];
 	}
-	const TouiMenuExtra extra = { TABS, TAB_N, &s_tab, kinds };
+	const char* tabs[TAB_N] = { zh_ui("O01", TABS[0]), zh_ui("O02", TABS[1]), zh_ui("O03", TABS[2]),
+	                            zh_ui("O04", TABS[3]), zh_ui("O05", TABS[4]) };
+	const TouiMenuExtra extra = { tabs, TAB_N, &s_tab, kinds };
 	touchui_menu_full(TOUI_OPTIONS, NULL, rows, s_n, &s_sel, back, 1, dim, 0, &extra);
 }
 
@@ -526,6 +541,8 @@ void optmenu_open(Options* live, const OptHost* host)
 	s_old = *live;
 	s_host = *host;
 	s_state = ST_MENU;
+	s_credit_hold = 0;
+	s_credit_fired = false;
 	go_tab(s_tab);
 }
 
@@ -540,6 +557,7 @@ bool optmenu_noise_focus(void)
 static void close_screen(void)
 {
 	s_state = ST_OFF;
+	touchui_author_credit(false);
 	touchui_menu_close(TOUI_OPTIONS);
 	touchui_box(NULL, NULL, 0);
 }
@@ -575,6 +593,20 @@ bool optmenu_update(u32 down)
 {
 	if (s_state == ST_OFF)
 		return false;
+	const u32 shoulders = KEY_L | KEY_R;
+	if (s_state == ST_MENU && s_page == PG_TABS && (hidKeysHeld() & shoulders) == shoulders) {
+		u64 now = osGetTime();
+		if (!s_credit_hold)
+			s_credit_hold = now;
+		if (!s_credit_fired && now - s_credit_hold >= 1200) {
+			s_credit_fired = true;
+			touchui_author_credit(true);
+		}
+		down &= ~shoulders;
+	} else {
+		s_credit_hold = 0;
+		s_credit_fired = false;
+	}
 	if (s_state == ST_ASK) {
 		// "Change the settings?": Yes keeps them, No puts the old ones back (0x4630c0); B goes back
 		// to the menu
@@ -763,9 +795,9 @@ static void explain_buttons(void)
 
 static void explain(const Setting* s, float t)
 {
-	char buf[200], name[64];
+	char buf[512], name[128];
 	fig_title(label(s), 8);
-	fig_text(expand(s->what, buf, sizeof buf), 200, 31, 372, 1, false, FONT_CENTER, FIGC_GREY);
+	fig_text(expand(ev_language() == 2 ? zh_settings[s - SETTINGS].help : s->what, buf, sizeof buf), 200, 31, 372, 1, false, FONT_CENTER, FIGC_GREY);
 	const char* note = s->note ? s->note(s_live) : NULL;
 	float bottom = note ? EX_NOTE - 5 : 234;
 	if (s->kind == K_PAGE && s->page == PG_BUTTONS) {
@@ -809,7 +841,7 @@ static void explain(const Setting* s, float t)
 			if (on)
 				fig_rect(cx - 12, 174, cx + 12, 176, FIGC_RED);
 			int max = (int)((bottom - 179) / font_line_px(FONT_SMALL));
-			fig_text(expand(s->lines[i], buf, sizeof buf), cx, 179, 172, max > 3 ? 3 : max, false, FONT_CENTER,
+			fig_text(expand(zh_help(s->lines[i]), buf, sizeof buf), cx, 179, 172, max > 3 ? 3 : max, false, FONT_CENTER,
 			         on ? FIGC_GREY : FIGC_DIM);
 		}
 	} else {
@@ -822,8 +854,8 @@ static void explain(const Setting* s, float t)
 			const char* nm = value_name(s, v, name, sizeof name);
 			if (s->lines) {
 				float h = font_line_px(FONT_BIG);
-				char line[200];
-				expand(s->lines[i], line, sizeof line);
+				char line[512];
+				expand(zh_help(s->lines[i]), line, sizeof line);
 				FontFit f;
 				font_fit_px(line, 236, 2, false, &f);
 				float lh = f.n * font_line_px(FONT_SMALL);
@@ -840,7 +872,7 @@ static void explain(const Setting* s, float t)
 		}
 	}
 	if (note)
-		fig_text(expand(note, buf, sizeof buf), 200, EX_NOTE, 372, 1, false, FONT_CENTER, FIGC_LABEL);
+		fig_text(expand(zh_help(note), buf, sizeof buf), 200, EX_NOTE, 372, 1, false, FONT_CENTER, FIGC_LABEL);
 }
 
 // Over play the explainer has a darker ground than the paused game's half dim (main.c), so its
@@ -868,7 +900,7 @@ void optmenu_draw_top(MapDrawFn draw)
 		const char* name;
 		char keys[48];
 		bool wait = controls_menu_focus(&name, keys, sizeof keys);
-		fig_title("Buttons", 8);
+		fig_title(zh_ui("K17", "Buttons"), 8);
 		fig_text(name, 200, 96, 372, 1, true, FONT_CENTER, FIGC_WHITE);
 		fig_text(wait ? "Press a button" : keys, 200, 122, 372, 1, true, FONT_CENTER, wait ? FIGC_RED : FIGC_GREY);
 		if (wait)

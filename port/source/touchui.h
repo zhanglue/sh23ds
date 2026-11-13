@@ -17,6 +17,7 @@ enum { TOUI_TITLE, TOUI_LEVELS, TOUI_PAUSE, TOUI_ITEMS, TOUI_MEMOS, TOUI_SAVE, T
 void touchui_init(void);                     // after C3D_Init and consoleInit
 void touchui_input(u32* down, u32* held);    // after the keys are read, before the game uses them
 void touchui_frame(void);                    // inside a C3D frame, before C3D_FrameEnd
+void touchui_author_credit(bool show);
 
 // A menu (rows the D-pad walks, *sel the row): a tap on a row selects it, a second tap presses A,
 // and on the chosen row's left or right end of a "< value >" row presses left or right. buttons
@@ -68,3 +69,5 @@ int touchui_quick(int* item);
 // A finger that came down where the screen shows nothing to tap: how far it moved since the last
 // call, in pixels (the behind camera turns with it). False when no such finger is down.
 bool touchui_free_drag(int* dx, int* dy);
+
+void touchui_subtitle_box(const char* text, const TouiButton* buttons, int nbuttons);

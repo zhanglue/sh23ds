@@ -268,7 +268,7 @@ static struct {
 	bool msg_shown;
 	int msg_serial;
 	const char* msg_text;      // msg_buf while a subtitle shows, else NULL
-	char msg_buf[320];
+	char msg_buf[2048];
 	DemoChar chars[DEMO_MAX_CHARS];
 	char key[32];
 	u32 cues;                  // the s_cues already done in this scene
@@ -832,7 +832,7 @@ static struct {
 	float elapsed;
 	bool shown;
 	const char* text;          // textbuf while a subtitle shows, else NULL
-	char textbuf[320];
+	char textbuf[2048];
 	int stage;                 // the stage whose messages the track reads
 	int serial;
 } Q;

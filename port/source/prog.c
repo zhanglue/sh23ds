@@ -459,7 +459,7 @@ void prog_abort(void)
 static int s_choice_n;               // answers of the choice waiting last frame (playtest.c)
 static const char* const* s_choice_labels;
 static int* s_choice_answer;
-static char s_choice_title[192];     // the question: the last page of its message, on one line
+static char s_choice_title[2048];     // the question: the last page of its message, on one line
 int prog_choice_waiting(void) { return s_running ? s_choice_n : 0; }
 
 int prog_choice(const char* const** labels, int** answer, const char** title)

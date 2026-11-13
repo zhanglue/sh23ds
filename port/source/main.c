@@ -1,3 +1,4 @@
+#include "ui_review.h"
 // sh23ds: Silent Hill 2 (PC Director's Cut) on the New 3DS, from the user's own converted data.
 //
 // Title: D-pad choose, A select, START exit.
@@ -165,7 +166,7 @@ static int s_save_place = -1;    // the save point last used (its place name in 
 static bool s_debug_hud;
 #define SAVE_PATH PACK_DIR "/save.dat"
 static void* s_fadequad;         // linear memory, 6 ROOM_VERTEX_SIZE vertices
-static char s_panel[512];        // stage program panel (choices, puzzles), empty when none
+static char s_panel[2048];        // stage program panel (choices, puzzles), empty when none
 bool app_closing;                    // gpusync.h
 static bool s_pt_shot, s_pt_quit;   // playtest driver: dump this frame, leave the main loop
 static bool s_free_voice;        // demo_voice_free's track is playing (its subtitles show)
@@ -1113,7 +1114,7 @@ static void inventory_draw(void)
 		// Mark is R (up to two items); with items marked A uses them together with the chosen one
 		static const TouiButton use[4] = { { "Use", KEY_A }, { "Examine", KEY_X }, { "Mark", KEY_R }, { "Back", KEY_B } };
 		static const TouiButton join[4] = { { "Combine", KEY_A }, { "Examine", KEY_X }, { "Mark", KEY_R }, { "Back", KEY_B } };
-		touchui_menu(TOUI_ITEMS, "Items", rows, k, &s_inv_sel, s_inv_mark[0] || s_inv_mark[1] ? join : use, 4);
+		touchui_menu(TOUI_ITEMS, zh_ui("Items", "Items"), rows, k, &s_inv_sel, s_inv_mark[0] || s_inv_mark[1] ? join : use, 4);
 	}
 }
 
@@ -1135,7 +1136,7 @@ static void inventory_draw_top(void)
 		return;
 	int it = inv_current();
 	if (!it) {
-		font_text(FONT_BIG, 256, 256, "No items", FONT_CENTER, 0x808080ff, 0x808080ff);
+		font_text(FONT_BIG, 256, 256, zh_ui("I07", "No items"), FONT_CENTER, 0x808080ff, 0x808080ff);
 		return;
 	}
 	if (s_inv_tex) {
@@ -1371,7 +1372,25 @@ static void files_load(int slot)
 	title_start(2);
 }
 
-static const SaveScreenHost s_files = { files_info, files_write, files_load };
+static const SaveScreenHost s_files = { .info = files_info, .write = files_write, .load = files_load };
+
+static bool continue_game(void);
+static bool s_pause_load_complete;
+static bool s_pause_loading;
+
+static void pause_files_load(int slot)
+{
+	int previous_slot = s_slot;
+	s_slot = slot;
+	s_pause_load_complete = continue_game();
+	if (!s_pause_load_complete)
+		s_slot = previous_slot;
+}
+
+static const SaveScreenHost s_pause_save = {
+	.info = files_info, .write = files_write, .stay_after_save = true,
+};
+static const SaveScreenHost s_pause_load = { .info = files_info, .load = pause_files_load };
 
 static bool any_save(void)
 {
@@ -3173,6 +3192,7 @@ static void draw_picture(const C3D_Mtx* ortho)
 #define UI_MAX_VERTS 8192      // the map screen and up to 1024 glyphs of PC text (font.c)
 static void* s_ui_vbuf[2];     // the second for the right eye of a 3D frame (stereo.h)
 static int s_ui_used;
+static void movie_ui_begin(void) { s_ui_used = 0; }
 static const C3D_Mtx* s_ui_ortho;
 
 static void ui_draw(C3D_Tex* tex, const MapVert* v, int n, u32 rgba)
@@ -3374,7 +3394,7 @@ static void memo_panel(const int* list, int n)
 			rows[i] = titles[i];
 		}
 		static const TouiButton b[2] = { { "Read", KEY_A }, { "Back", KEY_B } };
-		touchui_menu(TOUI_MEMOS, "Memos", rows, n < 64 ? n : 64, &s_memo_sel, n ? b : b + 1, n ? 2 : 1);
+		touchui_menu(TOUI_MEMOS, zh_ui("P11", "Memos"), rows, n < 64 ? n : 64, &s_memo_sel, n ? b : b + 1, n ? 2 : 1);
 	}
 }
 
@@ -3459,7 +3479,7 @@ static void memos_draw_top(void)
 	int list[64], n = memo_list(list, 64);
 	char t[64];
 	snprintf(t, sizeof t, "%s", n ? (memo_title(list[s_memo_sel % n]) ? memo_title(list[s_memo_sel % n]) : "?") :
-	                                "No memos yet");
+	                                zh_ui("N05", "No memos yet"));
 	for (char* c = t; *c; c++)
 		if (*c == '\n' || *c == '\f')
 			*c = ' ';
@@ -4082,6 +4102,8 @@ static bool continue_game(void)
 	if (sv.clear_save) {
 		// a clear data save (0x402d00 case 10): its clear data joins the system's and a New Game
 		// starts from the level screens, so FlagInit gives the New Game+ items and endings
+		if (s_state == ST_GAME)
+			enter_title();
 		prog_clear_merge(sv.clear);
 		clear_save();
 		s_title_sub = 1;
@@ -4139,6 +4161,7 @@ static void options_apply(void)
 	s_ps2_camera = s_opt.ps2_camera, s_cutscene_fov = s_opt.cutscene_fov;
 	s_msg_top = s_opt.msg_top;
 	s_opt.lang = (u8)ev_set_language(s_opt.lang);   // English when the pack lacks the language
+	movie_set_subtitles(s_opt.subtitles);
 	ev_set_bullet_adjust(s_opt.bullet);
 	combat_set_options(s_hold_stomp, s_swap_attack);
 	combat_set_infinite_ammo(s_opt.inf_ammo);
@@ -4459,14 +4482,26 @@ static bool pause_can_save(void)
 // The pause menu's row whose screen (the map, the memos) is up: B there comes back to the menu.
 static int s_pause_back = -1;
 
-static void pause_reopen(int row)
+static void pause_reopen(int action)
 {
 	s_paused = true;
 	s_pause_dirty = true;
 	ProgResults r;
 	prog_results(&r);
-	pausemenu_where(ev_mcard_message(157 + ev_stage()), r.time);
-	pausemenu_open_at(pause_can_save(), row);
+	int stage = ev_stage();
+	const char* place = ev_mcard_message(157 + stage);
+	// Stage 2 shares one save-location label across three interiors.
+	if (stage == 2 && s_nrooms > 0) {
+		const char* map = s_rooms[s_room];
+		if (!strcmp(map, "er01"))
+			place = zh_ui("PauseObservationRestroom", "Observation Deck Restroom");
+		else if (!strcmp(map, "er05"))
+			place = zh_ui("PauseTrailer", "Trailer");
+		else if (!strcmp(map, "er09") || !strcmp(map, "er13"))
+			place = zh_ui("PauseNeelysBar", "Neely's Bar");
+	}
+	pausemenu_where(place, r.time);
+	pausemenu_open_at(pause_can_save(), action);
 }
 
 // Returns true while the game is paused (the caller skips the game update).
@@ -4475,15 +4510,15 @@ static bool pause_update(u32 down)
 	if (!s_paused && s_pause_back >= 0) {
 		if (screens_open() || s_msg_page)
 			return false;                // the map, the memos or "no map of this area" still up
-		int row = s_pause_back;
+		int action = s_pause_back;
 		s_pause_back = -1;
-		pause_reopen(row);
+		pause_reopen(action);
 		return true;
 	}
 	if (!s_paused) {
 		if ((down & KEY_START) && !s_msg_page && !s_save_prompt && !s_inv_open && !s_warp_pending &&
 		    !screens_open()) {
-			pause_reopen(0);
+			pause_reopen(PM_RESUME);
 			sfx_play(SFX_MENU_OK, 1.0f, 0.0f);
 			return true;
 		}
@@ -4497,8 +4532,15 @@ static bool pause_update(u32 down)
 		return true;
 	}
 	if (savescreen_active()) {
-		if (!savescreen_update(down))
-			pausemenu_open(pause_can_save());
+		s_pause_load_complete = false;
+		if (!savescreen_update(down)) {
+			if (s_pause_load_complete) {
+				s_paused = false;
+				s_pause_dirty = true;
+			} else
+				pause_reopen(s_pause_loading ? PM_LOAD : PM_SAVE);
+			s_pause_loading = false;
+		}
 		return true;
 	}
 	switch (pausemenu_update(down)) {
@@ -4509,14 +4551,13 @@ static bool pause_update(u32 down)
 	case PM_SAVE:
 		pausemenu_close();
 		s_save_place = 157 + ev_stage();
-		savescreen_open(SS_SAVE, &s_files, prog_chapter());
+		savescreen_open(SS_SAVE, &s_pause_save, prog_chapter());
 		break;
 	case PM_LOAD:
-		// the PC's load screen (menu event 0x11); the port shows it over the title
-		s_paused = false;
-		pausemenu_close();               // its rows and question off the touch screen
-		enter_title();
-		savescreen_open(SS_LOAD, &s_files, 0);
+		// Keep the current game paused while the player chooses a save.
+		pausemenu_close();
+		s_pause_loading = true;
+		savescreen_open(SS_LOAD, &s_pause_load, prog_chapter());
 		break;
 	case PM_OPTIONS:
 		pausemenu_close();
@@ -4530,13 +4571,13 @@ static bool pause_update(u32 down)
 	case PM_MAP:                     // the port's own rows: B on their screens comes back here
 		s_paused = false;
 		s_pause_dirty = true;
-		s_pause_back = 5;
+		s_pause_back = PM_MAP;
 		open_map();
 		break;
 	case PM_MEMOS:
 		s_paused = false;
 		s_pause_dirty = true;
-		s_pause_back = 6;
+		s_pause_back = PM_MEMOS;
 		if (!prog_running())
 			open_memos();
 		break;
@@ -4599,7 +4640,7 @@ static void draw_top_text(void)
 	if (demo_active() || (s_free_voice && !s_msg_page && !s_save_prompt)) {
 		int serial;
 		const char* sub = demo_subtitle(&serial);
-		draw_message_top(s_opt.subtitles ? sub : NULL);
+		font_draw_subtitle(s_opt.subtitles ? sub : NULL);
 	} else if (s_msg_page && !s_inv_open && !s_save_prompt) {
 		draw_message_top(s_msg_page);
 	}
@@ -5109,7 +5150,7 @@ int main(void)
 	supersample_init(top, DISPLAY_TRANSFER_FLAGS);
 	setup_pipeline();
 	picture_init();                  // the Picture's soft pass (picture.h)
-	movie_init(top);
+	movie_init(top, movie_ui_begin);
 	touchui_init();                  // the touch screen is drawn from here on (touchui.c)
 
 	C3D_Mtx proj;
@@ -5937,9 +5978,9 @@ int main(void)
 				bool scene = demo_active();      // (a voice over the game cannot be skipped)
 				bool top = s_msg_top && font_ready();
 				if (scene)
-					touchui_box(top ? "" : (sub ? sub : ""), skip, 1);
+					touchui_subtitle_box(top ? "" : (sub ? sub : ""), skip, 1);
 				else
-					touchui_box(top || !sub || !*sub ? NULL : sub, NULL, -1);
+					touchui_subtitle_box(top || !sub || !*sub ? NULL : sub, NULL, -1);
 			}
 		} else if (s_sub_serial != -1) {
 			s_sub_serial = -1;               // the scene is over: the box below gets the screen back

@@ -132,3 +132,8 @@ void* ev_flag_block(void);
 #define EV_STATE_SIZE (EV_MAX_FLAGS / 8 + 256)
 void ev_state_get(void* buf);
 void ev_state_set(const void* buf);
+
+// The subtitle bank for an FMV, independent of the current stage.
+bool ev_movie_subtitles_open(int stage);
+const char* ev_movie_subtitle(unsigned message);
+void ev_movie_subtitles_close(void);

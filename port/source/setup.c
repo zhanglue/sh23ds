@@ -1,3 +1,4 @@
+#include "ui_review.h"
 #include "setup.h"
 #include "controls.h"
 #include "events.h"
@@ -28,13 +29,13 @@ static u8* field(int step) { return step == STEP_CAMERA ? &s_live->camera : &s_l
 static void texts(int step, bool new_layout, const char* names[2], const char* lines[2])
 {
 	if (step == STEP_CAMERA) {
-		names[0] = "Original", names[1] = "Behind";
-		lines[0] = "The PC's own shots, framed for each room.";
-		lines[1] = new_layout ? "Follows James. The C-Stick turns it." : "Follows James. Drag the touch screen to turn it.";
+		names[0] = zh_ui("SetupOriginal", "Original"), names[1] = zh_ui("SetupBehind", "Behind");
+		lines[0] = zh_ui("SetupOriginalHelp", "The PC's own shots, framed for each room.");
+		lines[1] = new_layout ? zh_ui("SetupBehindNew", "Follows James. The C-Stick turns it.") : zh_ui("SetupBehindOld", "Follows James. Drag the touch screen to turn it.");
 	} else {
-		names[0] = msg(85, "Rotational Style"), names[1] = msg(86, "Directional Style");
-		lines[0] = "Left and right turn James. Up walks, down backs away.";
-		lines[1] = "Push the way you want James to go.";
+		names[0] = zh_ui("SetupTank", msg(85, "Rotational Style")), names[1] = zh_ui("SetupDirectional", msg(86, "Directional Style"));
+		lines[0] = zh_ui("SetupTankHelp", "Left and right turn James. Up walks, down backs away.");
+		lines[1] = zh_ui("SetupDirectionalHelp", "Push the way you want James to go.");
 	}
 }
 
@@ -42,7 +43,7 @@ static void touch(void)
 {
 	// B on the left and A on the right, where they sit on the console; Back keeps its place, dim, on
 	// the first step
-	static const TouiButton prompts[2] = { { "Back", KEY_B }, { "Choose", KEY_A } };
+	const TouiButton prompts[2] = { { "Back", KEY_B }, { zh_ui("Choose", "Choose"), KEY_A } };
 	const char *names[2], *lines[2];
 	texts(s_step, controls_layout() == CONTROLS_LAYOUT_NEW, names, lines);
 	touchui_choices(names, lines, &s_sel, prompts, 2, s_step == 0 ? 1u : 0u);
@@ -53,10 +54,10 @@ static void go(int step)
 	s_step = step;
 	s_step_ms = osGetTime();
 	if (step == STEP_CONTROLS) {
-		static const TouiButton prompts[2] = { { "Back", KEY_B }, { "Start", KEY_A } };
+		const TouiButton prompts[2] = { { "Back", KEY_B }, { zh_ui("Start", "Start"), KEY_A } };
 		touchui_choices_close();
 		// shown alone (the buttons moved under a player who had seen the first run) it has no Back
-		touchui_box("Every button can be changed\nin Options, Controls.", s_only_controls ? prompts + 1 : prompts,
+		touchui_box(zh_ui("SetupButtonsHelp", "Every button can be changed\nin Options, Controls."), s_only_controls ? prompts + 1 : prompts,
 		            s_only_controls ? 1 : 2);
 		return;
 	}
@@ -143,11 +144,16 @@ static const Row ROWS[2][8] = {
 static const char* row_name(const Row* r)
 {
 	if (r->name)
-		return r->name;
-	static char aim[32];
+		return ev_language() == 2 && r->act >= 0 && r->act != ACT_ACTION
+			? controls_name((ControlsAction)r->act) : zh_ui(r->name, r->name);
+	static char aim[96];
 	char k[16];
 	u32 act = controls_keys(ACT_ACTION);
-	snprintf(aim, sizeof aim, "Aim, then %s attacks", controls_key_text(act & -act, k, sizeof k));
+	const char* key = controls_key_text(act & -act, k, sizeof k);
+	if (ev_language() == 2)
+		snprintf(aim, sizeof aim, "%s%s%s", zh_ui("AimBefore", ""), key, zh_ui("AimAfter", ""));
+	else
+		snprintf(aim, sizeof aim, "Aim, then %s attacks", key);
 	return aim;
 }
 
@@ -164,7 +170,7 @@ static void dpad_glyph(float cx, float cy, u32 key, u32 dim, u32 lit)
 
 static void draw_controls(void)
 {
-	fig_title("Controls", 14);
+	fig_title(zh_ui("O01", "Controls"), 14);
 	for (int col = 0; col < 2; col++) {
 		float x = col ? 212.0f : 20.0f, y = 58.0f;
 		for (int i = 0; i < 8; i++) {
@@ -199,7 +205,7 @@ void setup_draw_top(void)
 		fig_end();
 		return;
 	}
-	fig_title(s_step == STEP_CAMERA ? "Camera" : "Movement", 14);
+	fig_title(s_step == STEP_CAMERA ? zh_ui("SetupCamera", "Camera") : zh_ui("SetupMovement", "Movement"), 14);
 	int fig = s_step == STEP_CAMERA ? FIG_CAMERA : FIG_MOVEMENT;
 	for (int i = 0; i < 2; i++)
 		fig_draw(fig, i, i ? 208.0f : 16.0f, 82.0f, t, s_sel == i, NULL);

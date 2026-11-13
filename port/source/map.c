@@ -1,3 +1,4 @@
+#include "ui_review.h"
 #include "map.h"
 #include "bgm.h"
 #include "events.h"
@@ -366,6 +367,44 @@ static int nav(int dir)
 
 static void t3x_path(char* path, size_t n, const char* name)
 {
+	static const char* const localized[] = {
+		"apartmape1f",
+		"apartmape2f",
+		"apartmape3f",
+		"apartmapew1f",
+		"apartmapew2f",
+		"apartmapew3f",
+		"apartmapw",
+		"hospitalmap01",
+		"hospitalmap02",
+		"hotelmap1f01",
+		"hotelmap1f02",
+		"hotelmap2f01",
+		"hotelmap2f02",
+		"hotelmap3f01",
+		"hotelmap3f02",
+		"hotelmapbf01",
+		"hotelmapbf02",
+		"mapboldwin",
+		"outmap",
+		"outmape",
+		"outmapmark",
+		"outmapw",
+		"prisonmap03",
+	};
+	if (ev_language() == 2) {
+		for (size_t i = 0; i < sizeof localized / sizeof *localized; i++) {
+			if (!strcmp(name, localized[i])) {
+				snprintf(path, n, PACK_DIR "/map/zh/%s.t3x", name);
+				FILE* f = fopen(path, "rb");
+				if (f) {
+					fclose(f);
+					return;
+				}
+				break;
+			}
+		}
+	}
 	snprintf(path, n, PACK_DIR "/map/%s.t3x", name);
 }
 
@@ -398,8 +437,19 @@ static bool load_t3x(C3D_Tex* tex, const char* name)
 
 // The map's and its marker sheet's textures, kept while they stay the same (the screen and the
 // touch screen's small map share them; they are never drawn at the same time).
+static int s_texture_language;
+
+static void check_texture_language(void)
+{
+	if (s_texture_language == ev_language())
+		return;
+	s_texture_language = ev_language();
+	s_tex_name[0] = s_mark_name[0] = 0;
+}
+
 static void textures_for(int m)
 {
+	check_texture_language();
 	const MapRec* r = &s_maps[m];
 	if (strcmp(s_tex_name, r->tex)) {
 		if (s_tex_ok) C3D_TexDelete(&s_tex);
@@ -418,6 +468,7 @@ static void textures_for(int m)
 // after a load for two to three seconds on a console; the small map waits for them instead.
 static bool textures_ready(int m)
 {
+	check_texture_language();
 	const MapRec* r = &s_maps[m];
 	const char* need[2] = { strcmp(s_tex_name, r->tex) ? r->tex : "", strcmp(s_mark_name, r->mark) ? r->mark : "" };
 	bool ready = true;
@@ -847,8 +898,8 @@ bool map_zoomed(void) { return s_open && s_zoom_state >= 1 && s_zoom_state <= 2;
 const char* map_name(void)
 {
 	map_legend();
-	static char name[48];
-	snprintf(name, sizeof name, "%.47s", s_legend);
+	static char name[128];
+	snprintf(name, sizeof name, "%.127s", s_legend);
 	char* nl = strchr(name, '\n');
 	if (nl)
 		*nl = 0;
@@ -875,7 +926,7 @@ const char* map_legend(void)
 		snprintf(name, sizeof name, "Baldwin Mansion");
 	else
 		snprintf(name, sizeof name, "%s", s_shown > 0 && s_shown < 20 ? place[s_shown] : "");
-	snprintf(s_legend, sizeof s_legend, "%-30s\n\n%s", name,
+	snprintf(s_legend, sizeof s_legend, "%-30s\n\n%s", zh_ui(name, name),
 	         s_zoom_state >= 2 ? "Circle Pad / D-pad: look around\nA: whole map   B: close"
 	                           : "D-pad: other floors and maps\nA: zoom in   B: close");
 	return s_legend;

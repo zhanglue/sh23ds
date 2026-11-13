@@ -23,6 +23,7 @@ typedef struct {
 	bool (*info)(int slot, SaveSlotInfo* out);
 	bool (*write)(int slot, int mode);       // SS_SAVE: the game, SS_CLEAR: clear data
 	void (*load)(int slot);                  // SS_LOAD: the chosen file (the screen closes first)
+	bool stay_after_save;                     // return to the slot list after acknowledging a successful save
 } SaveScreenHost;
 
 void savescreen_open(int mode, const SaveScreenHost* host, int chapter);

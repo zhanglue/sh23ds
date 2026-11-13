@@ -17,7 +17,7 @@ typedef struct { float x, y, u, v; u32 rgba; } FontVert;    // top-screen pixels
 typedef void (*FontDrawFn)(C3D_Tex* tex, const FontVert* v, int n);
 
 #define FONT_FULL_WIDTH '\x06'
-enum { FONT_BIG = 0, FONT_SMALL = 1 };                     // 20x30 and 16x24 cells
+enum { FONT_BIG = 0, FONT_SMALL = 1, FONT_PLUS_TWO = 2, FONT_PLUS_FOUR = 4, FONT_SUBTITLE = 8 };                     // 20x30 and 16x24 cells
 enum { FONT_LEFT = 0, FONT_CENTER = 1, FONT_RIGHT = 3 };   // the PC's alignment modes
 
 bool font_init(const char* pack_dir, FontDrawFn draw);
@@ -46,7 +46,7 @@ void font_tris_px(C3D_Tex* tex, const FontVert* v, int n);
 // even that needs more lines (or a word is wider than the box) the last line is cut with "...",
 // cut is set and font_fit_cuts() counts it, for the start-up text check.
 #define FONT_FIT_LINES 4
-#define FONT_FIT_CHARS 112
+#define FONT_FIT_CHARS 256
 typedef struct { int font, n; bool cut; char line[FONT_FIT_LINES][FONT_FIT_CHARS]; } FontFit;
 bool font_fit_px(const char* s, float w, int max, bool big, FontFit* out);
 int font_fit_cuts(void);
@@ -63,3 +63,10 @@ float font_line_px(int font);
 C3D_Tex* font_texture(void);
 // The PC's text colours (0x47eca0, index 0..16) as top and bottom RGBA.
 void font_pc_color(int index, u32* top, u32* bottom);
+
+// Shared caption layout for the two screens. One pixel larger than the normal large font.
+int font_subtitle_px(const char* text, float screen_width, float bottom, FontVert* out, int max);
+void font_draw_subtitle(const char* text);
+
+C3D_Tex* font_subtitle_texture(void);
+int font_draw_enlarged(int font, float y, const char* text, u32 color, bool with_shadow);

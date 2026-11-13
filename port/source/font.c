@@ -5,7 +5,9 @@
 #include <string.h>
 #include <tex3ds.h>
 
-#define MAX_CODE 0x200
+#define LARGE_CODE_OFFSET 0x4000
+#define MOVIE_CODE_OFFSET 0x8000
+#define MAX_CODE 0xc000
 #define MAX_GLYPHS 1024      // per frame: a full results screen is about 450
 
 typedef struct {
@@ -19,8 +21,9 @@ static struct {
 	u16 cell_w, cell_h;
 	s16 index[MAX_CODE];      // code -> glyph, -1 when the font has none
 	Glyph* glyphs;
-} s_font[2];
-static C3D_Tex s_tex;
+} s_font[4];
+static C3D_Tex s_tex, s_subtitle_tex;
+static bool s_subtitle_ready;
 static bool s_ready;
 static FontDrawFn s_draw;
 static FontVert s_verts[MAX_GLYPHS * 6];
@@ -29,20 +32,17 @@ static int s_nverts;
 bool font_ready(void) { return s_ready; }
 int font_line_height(int font) { return s_font[font & 1].cell_h; }
 
-bool font_init(const char* pack_dir, FontDrawFn draw)
+static bool load_font(const char* pack_dir, const char* name, int first, C3D_Tex* tex)
 {
-	s_draw = draw;
-	if (s_ready)
-		return true;
 	char path[160];
-	snprintf(path, sizeof path, "%s/ui/font.bin", pack_dir);
+	snprintf(path, sizeof path, "%s/ui/%s.bin", pack_dir, name);
 	FILE* f = fopen(path, "rb");
 	if (!f)
 		return false;
 	char magic[4];
 	u16 n = 0;
 	bool ok = fread(magic, 4, 1, f) == 1 && !memcmp(magic, "FNT1", 4) && fread(&n, 2, 1, f) == 1 && n == 2;
-	for (int k = 0; ok && k < 2; k++) {
+	for (int k = first; ok && k < first + 2; k++) {
 		u16 head[3];
 		ok = fread(head, 2, 3, f) == 3;
 		if (!ok)
@@ -66,20 +66,36 @@ bool font_init(const char* pack_dir, FontDrawFn draw)
 	fclose(f);
 	if (!ok)
 		return false;
-	snprintf(path, sizeof path, "%s/ui/font.t3x", pack_dir);
+	snprintf(path, sizeof path, "%s/ui/%s.t3x", pack_dir, name);
 	f = fopen(path, "rb");
 	if (!f)
 		return false;
-	Tex3DS_Texture t = Tex3DS_TextureImportStdio(f, &s_tex, NULL, false);
+	Tex3DS_Texture t = Tex3DS_TextureImportStdio(f, tex, NULL, false);
 	fclose(f);
 	if (!t)
 		return false;
 	Tex3DS_TextureFree(t);
-	C3D_TexSetFilter(&s_tex, GPU_NEAREST, GPU_NEAREST);
-	C3D_TexSetWrap(&s_tex, GPU_CLAMP_TO_EDGE, GPU_CLAMP_TO_EDGE);
+	C3D_TexSetFilter(tex, GPU_NEAREST, GPU_NEAREST);
+	C3D_TexSetWrap(tex, GPU_CLAMP_TO_EDGE, GPU_CLAMP_TO_EDGE);
+	return true;
+}
+
+bool font_init(const char* pack_dir, FontDrawFn draw)
+{
+	s_draw = draw;
+	if (s_ready)
+		return true;
+	if (!load_font(pack_dir, "font", 0, &s_tex))
+		return false;
+	s_subtitle_ready = load_font(pack_dir, "font-subtitle", 2, &s_subtitle_tex);
 	ink_boxes();
 	s_ready = true;
 	return true;
+}
+
+C3D_Tex* font_subtitle_texture(void)
+{
+	return s_subtitle_ready ? &s_subtitle_tex : &s_tex;
 }
 
 // Where each glyph's ink is inside its rectangle, read once from the atlas (LA4: alpha in the low
@@ -117,9 +133,21 @@ static void ink_boxes(void)
 
 static const Glyph* glyph(int font, int code)
 {
-	if (code < 0 || code >= MAX_CODE || s_font[font].index[code] < 0)
+	if (code < 0 || code >= LARGE_CODE_OFFSET)
 		return NULL;
-	return &s_font[font].glyphs[s_font[font].index[code]];
+	const int base = font & 1;
+	if ((font & FONT_SUBTITLE) && s_subtitle_ready) {
+		int subtitle = s_font[base + 2].index[code];
+		return subtitle < 0 ? NULL : &s_font[base + 2].glyphs[subtitle];
+	}
+	if (font & (FONT_PLUS_TWO | FONT_PLUS_FOUR)) {
+		int offset = font & FONT_PLUS_FOUR ? MOVIE_CODE_OFFSET : LARGE_CODE_OFFSET;
+		int large = s_font[base].index[code + offset];
+		if (large >= 0)
+			return &s_font[base].glyphs[large];
+	}
+	int index = s_font[base].index[code];
+	return index < 0 ? NULL : &s_font[base].glyphs[index];
 }
 
 // 0x47f400: codes below 0xe0 advance by their width plus 2 (the space by 7), the full-width ones
@@ -133,7 +161,7 @@ static int advance(int font, int code)
 	if ((code & 0xff00) == 0xfd00)
 		return code & 0xff;
 	const Glyph* g = glyph(font, code);
-	return g ? g->adv : code < 0xe0 ? 7 : s_font[font].cell_w + 2;
+	return g ? g->adv : code < 0xe0 ? 7 : s_font[font & 1].cell_w + 2;
 }
 
 // The code at *s in the pack's text, moving *s past it: a byte c >= 0x20 is the code c - 0x20,
@@ -235,7 +263,6 @@ float font_width(int font, const char* s)
 {
 	if (!s_ready || !s)
 		return 0.0f;
-	font &= 1;
 	float best = 0.0f;
 	u16 line[128];
 	while (*s) {
@@ -248,7 +275,11 @@ float font_width(int font, const char* s)
 }
 
 C3D_Tex* font_texture(void) { return s_ready ? &s_tex : NULL; }
-float font_line_px(int font) { return s_font[font & 1].cell_h * 0.46875f; }
+float font_line_px(int font)
+{
+	const int pixels = font & FONT_PLUS_FOUR ? 4 : font & FONT_PLUS_TWO ? 2 : font & FONT_SUBTITLE ? 1 : 0;
+	return s_font[font & 1].cell_h * 0.46875f + pixels;
+}
 float font_width_px(int font, const char* s) { return font_width(font, s) * 0.625f; }
 
 bool font_ink_px(int font, const char* s, float* x0, float* y0, float* x1, float* y1)
@@ -278,7 +309,7 @@ int font_layout_px(int font, float x, float y, const char* s, int align, u32 top
 {
 	if (!s_ready || !s)
 		return 0;
-	font &= 1;
+	const C3D_Tex* tex = font & FONT_SUBTITLE ? font_subtitle_texture() : &s_tex;
 	int n = 0;
 	u16 line[128];
 	while (*s) {
@@ -293,8 +324,8 @@ int font_layout_px(int font, float x, float y, const char* s, int align, u32 top
 			if (g && g->w && n + 6 <= max) {
 				float x0 = floorf(pen + 0.625f + 0.5f), y0 = floorf(y + 0.5f);
 				float x1 = x0 + g->w, y1 = y0 + g->h;
-				float u0 = g->x / (float)s_tex.width, v0 = g->y / (float)s_tex.height;
-				float u1 = (g->x + g->w) / (float)s_tex.width, v1 = (g->y + g->h) / (float)s_tex.height;
+				float u0 = g->x / (float)tex->width, v0 = g->y / (float)tex->height;
+				float u1 = (g->x + g->w) / (float)tex->width, v1 = (g->y + g->h) / (float)tex->height;
 				FontVert a = { x0, y0, u0, v0, top }, b = { x1, y0, u1, v0, top };
 				FontVert c = { x0, y1, u0, v1, bottom }, d = { x1, y1, u1, v1, bottom };
 				FontVert* v = &out[n];
@@ -305,7 +336,7 @@ int font_layout_px(int font, float x, float y, const char* s, int align, u32 top
 		}
 		if (*s == '\n')
 			s++;
-		y += s_font[font].cell_h * 0.46875f;
+		y += font_line_px(font);
 	}
 	return n;
 }
@@ -363,17 +394,29 @@ static int wrap_px(int font, const char* s, float w, FontFit* out, bool* wide)
 	*wide = false;
 	while (*s) {
 		int k = 0;
+		bool space = *s == ' ';
 		while (*s == ' ')
 			s++;
-		while (*s && *s != ' ' && *s != '\n' && k < FONT_FIT_CHARS - 1)
-			word[k++] = *s++;
+		while (*s && *s != ' ' && *s != '\n') {
+			const char* end = s;
+			int code = next_code(&end);
+			int bytes = (int)(end - s);
+			bool chinese = code >= 0x1000 && code < LARGE_CODE_OFFSET;
+			if (k + bytes >= FONT_FIT_CHARS || (k && chinese))
+				break;
+			memcpy(word + k, s, bytes);
+			k += bytes;
+			s = end;
+			if (chinese)
+				break;
+		}
 		word[k] = 0;
 		bool brk = *s == '\n';
 		if (brk)
 			s++;
 		if (k) {
 			char t[FONT_FIT_CHARS * 2];
-			snprintf(t, sizeof t, "%s%s%s", cur, cur[0] ? " " : "", word);
+			snprintf(t, sizeof t, "%s%s%s", cur, cur[0] && space ? " " : "", word);
 			if (!cur[0] || (font_width_px(font, t) <= w && strlen(t) < FONT_FIT_CHARS)) {
 				snprintf(cur, sizeof cur, "%s", t);
 			} else {
@@ -399,7 +442,7 @@ static int wrap_px(int font, const char* s, float w, FontFit* out, bool* wide)
 static int s_cuts;
 int font_fit_cuts(void) { return s_cuts; }
 
-bool font_fit_px(const char* s, float w, int max, bool big, FontFit* out)
+static bool fit_px(const char* s, float w, int max, bool big, int variant, FontFit* out)
 {
 	memset(out, 0, sizeof *out);
 	if (!s || !*s || !s_ready)
@@ -407,8 +450,8 @@ bool font_fit_px(const char* s, float w, int max, bool big, FontFit* out)
 	max = max < 1 ? 1 : max > FONT_FIT_LINES ? FONT_FIT_LINES : max;
 	bool wide;
 	for (int f = big ? FONT_BIG : FONT_SMALL; f <= FONT_SMALL; f++) {
-		out->font = f;
-		out->n = wrap_px(f, s, w, out, &wide);
+		out->font = f | variant;
+		out->n = wrap_px(out->font, s, w, out, &wide);
 		if (out->n <= max && !wide)
 			return true;
 	}
@@ -422,7 +465,7 @@ bool font_fit_px(const char* s, float w, int max, bool big, FontFit* out)
 	char t[FONT_FIT_CHARS];
 	for (;;) {
 		snprintf(t, sizeof t, "%.*s...", k, last);
-		if (k <= 0 || font_width_px(FONT_SMALL, t) <= w)
+		if (k <= 0 || font_width_px(out->font, t) <= w)
 			break;
 		k = char_back(last, k);
 	}
@@ -431,6 +474,11 @@ bool font_fit_px(const char* s, float w, int max, bool big, FontFit* out)
 	snprintf(t, sizeof t, "%.*s...", k, last);
 	memcpy(last, t, sizeof t);
 	return false;
+}
+
+bool font_fit_px(const char* s, float w, int max, bool big, FontFit* out)
+{
+	return fit_px(s, w, max, big, 0, out);
 }
 
 void font_flush(void)
@@ -459,4 +507,55 @@ void font_pc_color(int index, u32* top, u32* bottom)
 		}
 		*(k ? bottom : top) = out;
 	}
+}
+
+int font_subtitle_px(const char* text, float screen_width, float bottom, FontVert* out, int max)
+{
+	if (!text || !*text || !s_ready)
+		return 0;
+	FontFit fit;
+	fit_px(text, screen_width - 32.0f, 4, true, s_subtitle_ready ? FONT_SUBTITLE : 0, &fit);
+	float center = screen_width * 0.5f;
+	float y = bottom - fit.n * font_line_px(fit.font);
+	int count = 0;
+	u32 white, unused;
+	font_pc_color(0, &white, &unused);
+	for (int i = 0; i < fit.n; i++) {
+		for (int shadow = 1; shadow >= 0; shadow--) {
+			u32 color = shadow ? 0x000000c0 : white;
+			count += font_layout_px(fit.font, center + shadow, y + shadow, fit.line[i], FONT_CENTER,
+			                        color, color, out + count, max - count);
+		}
+		y += font_line_px(fit.font);
+	}
+	return count;
+}
+
+void font_draw_subtitle(const char* text)
+{
+	static FontVert caption[6 * 384];
+	int n = font_subtitle_px(text, 400.0f, 221.0f, caption, 6 * 384);
+	if (n && s_draw)
+		s_draw(font_subtitle_texture(), caption, n);
+}
+
+int font_draw_enlarged(int font, float y, const char* text, u32 color, bool with_shadow)
+{
+	if (!s_ready || !text || !*text || !s_draw)
+		return 0;
+	FontFit fit;
+	fit_px(text, 340.0f, 2, (font & 1) == FONT_BIG, font & ~1, &fit);
+	static FontVert verts[6 * 128];
+	float py = 120.0f + (y - 256.0f) * 0.46875f;
+	for (int i = 0; i < fit.n; i++) {
+		for (int shadow = with_shadow ? 1 : 0; shadow >= 0; shadow--) {
+			u32 rgba = shadow ? 0x000000c0 : color;
+			int n = font_layout_px(fit.font, 200.0f + shadow, py + shadow, fit.line[i],
+			                       FONT_CENTER, rgba, rgba, verts, 6 * 128);
+			if (n)
+				s_draw(&s_tex, verts, n);
+		}
+		py += font_line_px(fit.font);
+	}
+	return fit.n;
 }

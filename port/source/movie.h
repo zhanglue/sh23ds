@@ -11,7 +11,7 @@
 #define MOVIE_CH 2
 
 // After C3D_Init and audio_init. top is the render target movies are drawn on.
-bool movie_init(C3D_RenderTarget* top);
+bool movie_init(C3D_RenderTarget* top, void (*begin_ui)(void));
 void movie_exit(void);
 
 // Names are the ones the PC game asks for ("toilet", "open_voc", "ending", "end_mria", ...): some map
@@ -38,3 +38,5 @@ void movie_debug(bool log, bool cpu_convert);
 void movie_skip_all(bool on);        // the playtest driver: movie_play returns at once
 
 const char* movie_status(void);
+
+void movie_set_subtitles(bool enabled);

@@ -1,3 +1,4 @@
+#include "ui_review.h"
 #include "savescreen.h"
 #include "events.h"
 #include "font.h"
@@ -84,19 +85,19 @@ static int s_touch_answer;       // 0 Yes, 1 No
 
 static void touch(void)
 {
-	static const TouiButton save[2] = { { "Save", KEY_A }, { "Back", KEY_B } };
-	static const TouiButton load[2] = { { "Load", KEY_A }, { "Back", KEY_B } };
+	const TouiButton save[2] = { { zh_ui("S01", "Save"), KEY_A }, { "Back", KEY_B } };
+	const TouiButton load[2] = { { zh_ui("S02", "Load"), KEY_A }, { "Back", KEY_B } };
 	static const TouiButton answer[2] = { { "Select", KEY_A }, { "Back", KEY_B } };
 	static const TouiButton ok[1] = { { "OK", KEY_A } };
 	if (s_state == ST_LIST) {
-		static char text[SAVE_SLOTS][48];
+		static char text[SAVE_SLOTS][256];
 		const char* rows[SAVE_SLOTS];
 		u64 dim = 0;
 		for (int i = 0; i < SAVE_SLOTS; i++) {
 			char t[16];
 			play_time(&s_info[i], t, sizeof t);
 			if (s_info[i].used) {
-				snprintf(text[i], sizeof text[i], "%d. %.22s   %s", i + 1, place(&s_info[i]), s_info[i].clear ? "" : t);
+				snprintf(text[i], sizeof text[i], "%d. %.*s   %s", i + 1, ev_language() == 2 ? 220 : 22, place(&s_info[i]), s_info[i].clear ? "" : t);
 			} else {
 				snprintf(text[i], sizeof text[i], "%d. %s", i + 1, s_mode == SS_LOAD ? "-" : card(36, "Save to new file."));
 				if (s_mode == SS_LOAD)
@@ -105,10 +106,10 @@ static void touch(void)
 			rows[i] = text[i];
 		}
 		touchui_box(NULL, NULL, 0);
-		touchui_menu_ex(TOUI_SAVE, s_mode == SS_LOAD ? "Load" : "Save", rows, SAVE_SLOTS, &s_sel,
+		touchui_menu_ex(TOUI_SAVE, s_mode == SS_LOAD ? zh_ui("S02", "Load") : zh_ui("S01", "Save"), rows, SAVE_SLOTS, &s_sel,
 		                s_mode == SS_LOAD ? load : save, 2, dim, 0);
 	} else if (s_state == ST_OVERWRITE) {
-		const char* rows[2] = { "Yes", "No" };
+		const char* rows[2] = { zh_ui("S07", "Yes"), zh_ui("S08", "No") };
 		touchui_box(NULL, NULL, 0);
 		touchui_menu_ex(TOUI_SAVE, card(46, "Do you wish to overwrite?"), rows, 2, &s_touch_answer, answer, 2, 0,
 		                TOUI_ONE_TAP);
@@ -147,6 +148,14 @@ static void close_screen(void)
 	touchui_menu_close(TOUI_SAVE);
 	touchui_box(NULL, NULL, 0);
 	bg_load(false);
+}
+
+static void write_selected(void)
+{
+	s_ok = s_host.write && s_host.write(s_sel, s_mode);
+	sfx_play(s_ok ? SFX_MENU_OK : SFX_MENU_CANCEL, 1.0f, 0.0f);
+	refresh();
+	s_state = ST_DONE;
 }
 
 bool savescreen_update(u32 down)
@@ -188,10 +197,7 @@ bool savescreen_update(u32 down)
 				s_state = ST_OVERWRITE;
 				s_touch_answer = 1;      // No first
 			} else {
-				s_ok = s_host.write && s_host.write(s_sel, s_mode);
-				sfx_play(s_ok ? SFX_MENU_OK : SFX_MENU_CANCEL, 1.0f, 0.0f);
-				refresh();
-				s_state = ST_DONE;
+				write_selected();
 			}
 		}
 	} else if (s_state == ST_OVERWRITE) {
@@ -202,18 +208,20 @@ bool savescreen_update(u32 down)
 		if ((down & KEY_A) && s_touch_answer == 1)
 			down = KEY_B;            // No
 		if (down & KEY_A) {
-			s_ok = s_host.write && s_host.write(s_sel, s_mode);
-			sfx_play(s_ok ? SFX_MENU_OK : SFX_MENU_CANCEL, 1.0f, 0.0f);
-			refresh();
-			s_state = ST_DONE;
+			write_selected();
 		} else if (down & KEY_B) {
 			sfx_play(SFX_MENU_CANCEL, 1.0f, 0.0f);
 			s_state = ST_LIST;
 		}
 	} else if (s_state == ST_DONE) {
 		if (down & (KEY_A | KEY_B)) {
-			close_screen();
-			return false;
+			if (s_ok && s_host.stay_after_save) {
+				touchui_box(NULL, NULL, 0);
+				s_state = ST_LIST;
+			} else {
+				close_screen();
+				return false;
+			}
 		}
 	}
 	if (s_sel != s_shown_sel)
@@ -310,7 +318,7 @@ void savescreen_draw_top(void)
 	const u32 solid[4] = { red, red, red, red }, edge[4] = { red, clear, red, clear };
 	font_quad_px(NULL, 0.0f, 151.0f, bx - fade, 169.0f, 0, 0, 0, 0, solid);
 	font_quad_px(NULL, bx - fade, 151.0f, bx, 169.0f, 0, 0, 0, 0, edge);
-	char line[64];
+	char line[256];
 	snprintf(line, sizeof line, "File %d", s_sel + 1);
 	font_text(FONT_SMALL, x, pcy(140.0f), line, FONT_LEFT, faded(grey_t, k), faded(grey_b, k));
 	if (!f->used) {
@@ -323,12 +331,14 @@ void savescreen_draw_top(void)
 		} else {
 			char tm[16];
 			play_time(f, tm, sizeof tm);
-			snprintf(line, sizeof line, "Play time %s     Saves %d", tm, f->saves);
+			snprintf(line, sizeof line, zh_ui("SaveTimeAndCount", "Play time %s     Saves %d"), tm, f->saves);
 			font_text(FONT_SMALL, x, pcy(176.0f), line, FONT_LEFT, faded(white, k), faded(white, k));
 			if (f->chapter == 1)
-				snprintf(line, sizeof line, "Born From a Wish     Action %s", level(3 - f->action));
+				snprintf(line, sizeof line, zh_ui("SaveWishDifficulty", "Born From a Wish     Action %s"),
+				         level(3 - f->action));
 			else
-				snprintf(line, sizeof line, "Action %s     Riddle %s", level(3 - f->action), level(2 - f->riddle));
+				snprintf(line, sizeof line, zh_ui("SaveDifficulty", "Action %s     Riddle %s"),
+				         level(3 - f->action), level(2 - f->riddle));
 			font_text(FONT_SMALL, x, pcy(189.0f), line, FONT_LEFT, faded(grey_t, k), faded(grey_b, k));
 		}
 	}
